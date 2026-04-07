@@ -1,148 +1,131 @@
 # OpenClaw 集成指南
 
-## 本地 App → Gateway（Operator 模式）
+## 本地 App → Gateway
 
-适用于桌面应用或同设备运行的客户端，拥有完整控制权限。
-
-### 架构
+### Operator 模式（完整控制）
 
 ```
-Your App (Operator)         OpenClaw Gateway
-├─ WebSocket Client  ◄──►   ws://127.0.0.1:18789
-└─ State Management         ├─ Auth
-                            ├─ Session Mgmt
-                            ├─ Channel Registry
-                            └─ Agent Runtime
+Your App                      OpenClaw Gateway
+├─ WebSocket Client  ◄──►     ws://127.0.0.1:18789
+└─ State Management           ├─ Auth
+                              ├─ Session Mgmt
+                              └─ Agent Runtime
 ```
 
-### 连接流程
-
+**连接：**
 ```javascript
-const ws = new WebSocket('ws://127.0.0.1:18789');
-
-// 1. 接收 challenge
-// 2. 发送 connect
 {
-  type: 'req',
-  method: 'connect',
-  params: {
-    role: 'operator',
-    scopes: ['operator.read', 'operator.write'],
-    auth: { token: 'your-gateway-token' },
-    device: { id, publicKey, signature, signedAt, nonce }
-  }
+  role: 'operator',
+  scopes: ['operator.read', 'operator.write'],
+  auth: { token: 'your-gateway-token' },
+  device: { id, publicKey, signature, signedAt, nonce }
 }
 ```
-
-### 首次配对
-
-```bash
-openclaw devices list
-openclaw devices approve <request-id>
-```
-
-> 本地回环自动审批，远程需显式审批。
 
 ---
 
-## 移动端 → Gateway（Node 模式）
+## 移动端 → Gateway
 
-适用于 iOS/Android App，作为节点暴露设备能力（相机、位置、通知等）。
-
-### 架构
+### 方案 A：中转架构（推荐）
 
 ```
-Mobile App (Node)           OpenClaw Gateway
-├─ WebSocket Client  ◄──►   ws://gateway-host:18789
-├─ Camera/Location            (LAN / Tailscale / Public)
-└─ Push Notification
+Mobile App          Local App           OpenClaw Gateway
+├─ Camera/Location  ◄──► WS Server  ◄──► WS Client
+├─ Filesystem           HTTP API        (Operator)
+└─ Push Notif.          (Operator)
 ```
 
-### 网络方案对比
+本地 App 作为代理层，移动端通过 HTTP/WebSocket 连接本地 App。
 
-| 场景 | 配置 | 说明 |
-|------|------|------|
-| **同 Wi-Fi** | `gateway.bind: lan` | 最简单，Bonjour 自动发现 |
-| **跨网络** | `gateway.tailscale.mode: serve` | 最安全，推荐 |
-| **公网访问** | `plugins.entries.device-pair.config.publicUrl` | 需反向代理 |
+**适用：**照片备份、文件同步、主动数据推送
 
-### 接入步骤
+**优点：**移动端无需 Token，本地可预处理
 
-**1. Gateway 配置（选择一种）**
+---
 
-```bash
-# 方案 A：同 Wi-Fi
-openclaw config set gateway.bind lan
+### 方案 B：Node 模式（能力暴露）
 
-# 方案 B：Tailscale（推荐）
-openclaw config set gateway.tailscale.mode serve
-
-# 方案 C：公网 URL
-openclaw config set plugins.entries.device-pair.config.publicUrl https://your-domain.com
+```
+Mobile App (Node)             OpenClaw Gateway
+├─ Camera                     ├─ node.invoke camera.snap
+├─ Location        ◄────────► ├─ node.invoke location.get
+└─ Screen Record              └─ (被动响应)
 ```
 
-**2. 生成设置码**
+移动端作为 Node 被动响应 Gateway 请求。
 
-```bash
-openclaw qr --json
-```
+**适用：**相机、位置、屏幕录制
 
-**3. 移动端连接**
+**限制：**无法主动操作 Gateway
 
-- 扫描二维码，或
-- 手动输入 Gateway 地址（host:port）
+---
 
-**4. 设备配对**
+## 外网连接方案
 
-```bash
-openclaw devices list          # 查看待审批设备
-openclaw devices approve <id>  # 审批
-```
+移动端外网访问 Gateway 需配置 TLS 反向代理。
 
-**5. 连接参数（Node 角色）**
+### 反向代理配置
 
-```javascript
-{
-  type: 'req',
-  method: 'connect',
-  params: {
-    role: 'node',
-    scopes: [],
-    caps: ['camera', 'location', 'notification'],
-    commands: ['camera.snap', 'location.get'],
-    device: { id, publicKey, signature, signedAt, nonce }
-  }
+使用 nginx 配置 HTTPS：
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name gateway.example.com;
+    
+    ssl_certificate /path/to/cert.pem;
+    ssl_certificate_key /path/to/key.pem;
+    
+    location / {
+        proxy_pass http://127.0.0.1:18789;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 86400;
+    }
 }
 ```
 
-### 能力声明
+**移动端连接：**
+```javascript
+const ws = new WebSocket('wss://gateway.example.com:18789');
+```
 
-Node 向 Gateway 暴露的设备能力：
+### 其他方案
 
-| 能力 | 命令 |
+| 方案 | 说明 |
 |------|------|
-| `camera` | `camera.snap` |
-| `location` | `location.get` |
-| `notification` | `push.apns.register` |
-| `screen` | `screen.record` |
+| **frp** | 内网穿透工具，支持 TLS |
+| **ngrok** | 临时公网隧道，自动生成 HTTPS |
+| **cloudflare tunnel** | 免费隧道，自带 HTTPS |
 
 ---
 
-## 核心 RPC 方法
+## 协议要求
 
-| 功能 | Operator | Node |
-|------|----------|------|
-| 聊天 | `chat.send`, `chat.history` | - |
-| 会话 | `sessions.list` | - |
-| 节点调用 | `node.list`, `node.invoke` | 接收 invoke |
-| 配置 | `config.get`, `config.set` | - |
-| 定时任务 | `cron.list`, `cron.add` | - |
+| 场景 | 协议 | 说明 |
+|------|------|------|
+| 本地回环 | `ws://` | 127.0.0.1 / localhost |
+| 私有 LAN | `ws://` | 192.168.x.x / 10.x.x.x |
+| 公网/外网 | `wss://` | 强制加密 |
+
+> **移动端外网必须 `wss://`**
+
+---
+
+## 设备配对
+
+```bash
+openclaw devices list          # 查看待审批
+openclaw devices approve <id>  # 审批设备
+```
+
+本地回环自动审批，远程需显式审批。
 
 ---
 
 ## 参考
 
-- 协议详情：`docs/gateway/protocol.md`
-- 远程访问：`docs/gateway/remote.md`
-- 设备配对：`docs/gateway/pairing.md`
-- iOS 集成：`docs/platforms/ios.md`
+- `docs/gateway/protocol.md` — 协议详情
+- `docs/gateway/remote.md` — 远程访问
+- `docs/gateway/pairing.md` — 设备配对
