@@ -1,6 +1,13 @@
 import path from "node:path";
-import { fileTypeFromBuffer } from "file-type";
+import { normalizeOptionalLowercaseString } from "../shared/string-coerce.js";
 import { type MediaKind, mediaKindFromMime } from "./constants.js";
+
+let fileTypeModulePromise: Promise<typeof import("file-type")> | undefined;
+
+function loadFileTypeModule(): Promise<typeof import("file-type")> {
+  fileTypeModulePromise ??= import("file-type");
+  return fileTypeModulePromise;
+}
 
 // Map common mimes to preferred file extensions.
 const EXT_BY_MIME: Record<string, string> = {
@@ -12,6 +19,10 @@ const EXT_BY_MIME: Record<string, string> = {
   "image/gif": ".gif",
   "audio/ogg": ".ogg",
   "audio/mpeg": ".mp3",
+  "audio/wav": ".wav",
+  "audio/flac": ".flac",
+  "audio/aac": ".aac",
+  "audio/opus": ".opus",
   "audio/x-m4a": ".m4a",
   "audio/mp4": ".m4a",
   "video/mp4": ".mp4",
@@ -32,6 +43,10 @@ const EXT_BY_MIME: Record<string, string> = {
   "text/csv": ".csv",
   "text/plain": ".txt",
   "text/markdown": ".md",
+  "text/html": ".html",
+  "text/xml": ".xml",
+  "text/css": ".css",
+  "application/xml": ".xml",
 };
 
 const MIME_BY_EXT: Record<string, string> = {
@@ -39,6 +54,8 @@ const MIME_BY_EXT: Record<string, string> = {
   // Additional extension aliases
   ".jpeg": "image/jpeg",
   ".js": "text/javascript",
+  ".htm": "text/html",
+  ".xml": "text/xml", // pin text/xml as canonical (application/xml also maps to .xml in EXT_BY_MIME)
 };
 
 const AUDIO_FILE_EXTENSIONS = new Set([
@@ -54,11 +71,7 @@ const AUDIO_FILE_EXTENSIONS = new Set([
 ]);
 
 export function normalizeMimeType(mime?: string | null): string | undefined {
-  if (!mime) {
-    return undefined;
-  }
-  const cleaned = mime.split(";")[0]?.trim().toLowerCase();
-  return cleaned || undefined;
+  return normalizeOptionalLowercaseString(mime?.split(";")[0]);
 }
 
 async function sniffMime(buffer?: Buffer): Promise<string | undefined> {
@@ -66,6 +79,7 @@ async function sniffMime(buffer?: Buffer): Promise<string | undefined> {
     return undefined;
   }
   try {
+    const { fileTypeFromBuffer } = await loadFileTypeModule();
     const type = await fileTypeFromBuffer(buffer);
     return type?.mime ?? undefined;
   } catch {
@@ -187,6 +201,6 @@ export function imageMimeFromFormat(format?: string | null): string | undefined 
   }
 }
 
-export function kindFromMime(mime?: string | null): MediaKind {
+export function kindFromMime(mime?: string | null): MediaKind | undefined {
   return mediaKindFromMime(normalizeMimeType(mime));
 }

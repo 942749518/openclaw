@@ -1,22 +1,31 @@
 import crypto from "node:crypto";
 import path from "node:path";
-import type { OpenClawConfig } from "openclaw/plugin-sdk";
+import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
+import {
+  normalizeOptionalLowercaseString,
+  normalizeOptionalString,
+} from "openclaw/plugin-sdk/text-runtime";
 import { resolveBlueBubblesServerAccount } from "./account-resolve.js";
-import { postMultipartFormData } from "./multipart.js";
+import { assertMultipartActionOk, postMultipartFormData } from "./multipart.js";
 import {
   getCachedBlueBubblesPrivateApiStatus,
   isBlueBubblesPrivateApiStatusEnabled,
 } from "./probe.js";
 import { resolveRequestUrl } from "./request-url.js";
+import type { OpenClawConfig } from "./runtime-api.js";
 import { getBlueBubblesRuntime, warnBlueBubbles } from "./runtime.js";
 import { extractBlueBubblesMessageId, resolveBlueBubblesSendTarget } from "./send-helpers.js";
-import { resolveChatGuidForTarget } from "./send.js";
+import { createChatForHandle, resolveChatGuidForTarget } from "./send.js";
 import {
   blueBubblesFetchWithTimeout,
   buildBlueBubblesApiUrl,
   type BlueBubblesAttachment,
-  type BlueBubblesSendTarget,
+  type SsrFPolicy,
 } from "./types.js";
+
+function blueBubblesPolicy(allowPrivateNetwork: boolean | undefined): SsrFPolicy {
+  return allowPrivateNetwork ? { allowPrivateNetwork: true } : {};
+}
 
 export type BlueBubblesAttachmentOpts = {
   serverUrl?: string;
@@ -48,7 +57,7 @@ function ensureExtension(filename: string, extension: string, fallbackBase: stri
 }
 
 function resolveVoiceInfo(filename: string, contentType?: string) {
-  const normalizedType = contentType?.trim().toLowerCase();
+  const normalizedType = normalizeOptionalLowercaseString(contentType);
   const extension = path.extname(filename).toLowerCase();
   const isMp3 =
     extension === ".mp3" || (normalizedType ? AUDIO_MIME_MP3.has(normalizedType) : false);
@@ -122,10 +131,12 @@ export async function downloadBlueBubblesAttachment(
     };
   } catch (error) {
     if (readMediaFetchErrorCode(error) === "max_bytes") {
-      throw new Error(`BlueBubbles attachment too large (limit ${maxBytes} bytes)`);
+      throw new Error(`BlueBubbles attachment too large (limit ${maxBytes} bytes)`, {
+        cause: error,
+      });
     }
-    const text = error instanceof Error ? error.message : String(error);
-    throw new Error(`BlueBubbles attachment download failed: ${text}`);
+    const text = formatErrorMessage(error);
+    throw new Error(`BlueBubbles attachment download failed: ${text}`, { cause: error });
   }
 }
 
@@ -154,8 +165,8 @@ export async function sendBlueBubblesAttachment(params: {
   const wantsVoice = asVoice === true;
   const fallbackName = wantsVoice ? "Audio Message" : "attachment";
   filename = sanitizeFilename(filename, fallbackName);
-  contentType = contentType?.trim() || undefined;
-  const { baseUrl, password, accountId } = resolveAccount(opts);
+  contentType = normalizeOptionalString(contentType);
+  const { baseUrl, password, accountId, allowPrivateNetwork } = resolveAccount(opts);
   const privateApiStatus = getCachedBlueBubblesPrivateApiStatus(accountId);
   const privateApiEnabled = isBlueBubblesPrivateApiStatusEnabled(privateApiStatus);
 
@@ -180,16 +191,40 @@ export async function sendBlueBubblesAttachment(params: {
   }
 
   const target = resolveBlueBubblesSendTarget(to);
-  const chatGuid = await resolveChatGuidForTarget({
+  let chatGuid = await resolveChatGuidForTarget({
     baseUrl,
     password,
     timeoutMs: opts.timeoutMs,
     target,
+    allowPrivateNetwork,
   });
   if (!chatGuid) {
-    throw new Error(
-      "BlueBubbles attachment send failed: chatGuid not found for target. Use a chat_guid target or ensure the chat exists.",
-    );
+    // For handle targets (phone numbers/emails), auto-create a new DM chat
+    if (target.kind === "handle") {
+      const created = await createChatForHandle({
+        baseUrl,
+        password,
+        address: target.address,
+        timeoutMs: opts.timeoutMs,
+        allowPrivateNetwork,
+      });
+      chatGuid = created.chatGuid;
+      // If we still don't have a chatGuid, try resolving again (chat was created server-side)
+      if (!chatGuid) {
+        chatGuid = await resolveChatGuidForTarget({
+          baseUrl,
+          password,
+          timeoutMs: opts.timeoutMs,
+          target,
+          allowPrivateNetwork,
+        });
+      }
+    }
+    if (!chatGuid) {
+      throw new Error(
+        "BlueBubbles attachment send failed: chatGuid not found for target. Use a chat_guid target or ensure the chat exists.",
+      );
+    }
   }
 
   const url = buildBlueBubblesApiUrl({
@@ -260,14 +295,10 @@ export async function sendBlueBubblesAttachment(params: {
     boundary,
     parts,
     timeoutMs: opts.timeoutMs ?? 60_000, // longer timeout for file uploads
+    ssrfPolicy: blueBubblesPolicy(allowPrivateNetwork),
   });
 
-  if (!res.ok) {
-    const errorText = await res.text();
-    throw new Error(
-      `BlueBubbles attachment send failed (${res.status}): ${errorText || "unknown"}`,
-    );
-  }
+  await assertMultipartActionOk(res, "attachment send");
 
   const responseBody = await res.text();
   if (!responseBody) {
