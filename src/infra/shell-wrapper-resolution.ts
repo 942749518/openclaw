@@ -1,3 +1,4 @@
+import { normalizeLowercaseStringOrEmpty } from "../shared/string-coerce.js";
 import {
   MAX_DISPATCH_WRAPPER_DEPTH,
   hasDispatchEnvManipulation,
@@ -106,6 +107,38 @@ export function isShellWrapperExecutable(token: string): boolean {
   return SHELL_WRAPPER_CANONICAL.has(normalizeExecutableToken(token));
 }
 
+function isShellWrapperInvocationInternal(argv: string[], depth: number): boolean {
+  if (!isWithinDispatchClassificationDepth(depth)) {
+    return false;
+  }
+  const token0 = argv[0]?.trim();
+  if (!token0) {
+    return false;
+  }
+
+  const dispatchUnwrap = unwrapKnownDispatchWrapperInvocation(argv);
+  if (dispatchUnwrap.kind === "blocked") {
+    return false;
+  }
+  if (dispatchUnwrap.kind === "unwrapped") {
+    return isShellWrapperInvocationInternal(dispatchUnwrap.argv, depth + 1);
+  }
+
+  const shellMultiplexerUnwrap = unwrapKnownShellMultiplexerInvocation(argv);
+  if (shellMultiplexerUnwrap.kind === "blocked") {
+    return false;
+  }
+  if (shellMultiplexerUnwrap.kind === "unwrapped") {
+    return isShellWrapperInvocationInternal(shellMultiplexerUnwrap.argv, depth + 1);
+  }
+
+  return isShellWrapperExecutable(token0);
+}
+
+export function isShellWrapperInvocation(argv: string[]): boolean {
+  return isShellWrapperInvocationInternal(argv, 0);
+}
+
 function normalizeRawCommand(rawCommand?: string | null): string | null {
   const trimmed = rawCommand?.trim() ?? "";
   return trimmed.length > 0 ? trimmed : null;
@@ -159,7 +192,7 @@ function extractPosixShellInlineCommand(argv: string[]): string | null {
 
 function extractCmdInlineCommand(argv: string[]): string | null {
   const idx = argv.findIndex((item) => {
-    const token = item.trim().toLowerCase();
+    const token = normalizeLowercaseStringOrEmpty(item);
     return token === "/c" || token === "/k";
   });
   if (idx === -1) {
@@ -194,6 +227,7 @@ function extractShellWrapperPayload(argv: string[], spec: ShellWrapperSpec): str
     case "powershell":
       return extractPowerShellInlineCommand(argv);
   }
+  throw new Error("Unsupported shell wrapper kind");
 }
 
 function hasEnvManipulationBeforeShellWrapperInternal(

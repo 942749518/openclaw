@@ -1,4 +1,4 @@
-import type { OpenClawConfig } from "../config/config.js";
+import type { OpenClawConfig } from "../config/types.js";
 import { logVerbose } from "../globals.js";
 import type {
   PluginWebFetchProviderEntry,
@@ -39,6 +39,10 @@ export function resolveWebFetchEnabled(params: {
     return params.fetch.enabled;
   }
   return true;
+}
+
+function resolveFetchConfig(config: OpenClawConfig | undefined): WebFetchConfig | undefined {
+  return resolveWebProviderConfig<"fetch", NonNullable<WebFetchConfig>>(config, "fetch");
 }
 
 function hasEntryCredential(

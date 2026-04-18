@@ -1,6 +1,7 @@
 import { parseFiniteNumber } from "openclaw/plugin-sdk/infra-runtime";
 import {
   asNullableRecord,
+  normalizeLowercaseStringOrEmpty,
   normalizeOptionalString,
   readStringField,
 } from "openclaw/plugin-sdk/text-runtime";
@@ -33,7 +34,7 @@ function readNumberLike(record: Record<string, unknown> | null, key: string): nu
   return parseFiniteNumber(record[key]);
 }
 
-function extractAttachments(message: Record<string, unknown>): BlueBubblesAttachment[] {
+export function extractAttachments(message: Record<string, unknown>): BlueBubblesAttachment[] {
   const raw = message["attachments"];
   if (!Array.isArray(raw)) {
     return [];
@@ -356,7 +357,7 @@ export function normalizeParticipantList(raw: unknown): BlueBubblesParticipant[]
     if (!normalized?.id) {
       continue;
     }
-    const key = normalized.id.toLowerCase();
+    const key = normalizeLowercaseStringOrEmpty(normalized.id);
     if (seen.has(key)) {
       continue;
     }
@@ -376,7 +377,7 @@ export function formatGroupMembers(params: {
     if (!entry?.id) {
       continue;
     }
-    const key = entry.id.toLowerCase();
+    const key = normalizeLowercaseStringOrEmpty(entry.id);
     if (seen.has(key)) {
       continue;
     }
@@ -476,6 +477,8 @@ export type NormalizedWebhookMessage = {
   replyToId?: string;
   replyToBody?: string;
   replyToSender?: string;
+  /** Webhook event type preserved for dedup key differentiation. */
+  eventType?: string;
 };
 
 export type NormalizedWebhookReaction = {
@@ -588,7 +591,7 @@ export function parseTapbackText(params: {
   quotedText: string;
 } | null {
   const trimmed = params.text.trim();
-  const lower = trimmed.toLowerCase();
+  const lower = normalizeLowercaseStringOrEmpty(trimmed);
   if (!trimmed) {
     return null;
   }
@@ -686,6 +689,7 @@ function extractMessagePayload(payload: Record<string, unknown>): Record<string,
 
 export function normalizeWebhookMessage(
   payload: Record<string, unknown>,
+  options?: { eventType?: string },
 ): NormalizedWebhookMessage | null {
   const message = extractMessagePayload(payload);
   if (!message) {
@@ -773,6 +777,7 @@ export function normalizeWebhookMessage(
     replyToId: replyMetadata.replyToId,
     replyToBody: replyMetadata.replyToBody,
     replyToSender: replyMetadata.replyToSender,
+    eventType: options?.eventType,
   };
 }
 
