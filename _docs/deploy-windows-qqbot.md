@@ -112,6 +112,7 @@ QQBOT_CLIENT_SECRET=your-qq-client-secret
 
 1. https://q.qq.com 扫码登录 → 创建机器人 → 记下 **AppID** 和 **AppSecret**
 2. AppSecret 离开页面后无法再查看，只能重新生成
+3. 安装插件：`openclaw plugins install @tencent-connect/openclaw-qqbot@latest`
 
 ```powershell
 openclaw channels add --channel qqbot --use-env
