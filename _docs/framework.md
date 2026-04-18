@@ -14,17 +14,20 @@
                            ▼ WebSocket
 ┌─────────────────────────────────────────────────────────┐
 │   Gateway (控制平面)                                      │
-│   ├─ Channel Registry   通道注册中心                       │
-│   ├─ Provider Registry  模型提供商注册中心                  │
-│   ├─ Agent Runtime      AI 代理运行时                      │
-│   └─ Control UI         Web 控制界面                       │
+│   ├─ Channel Registry     通道注册中心                     │
+│   ├─ Provider Registry    模型提供商注册中心                │
+│   ├─ Agent Runtime        AI 代理运行时                    │
+│   ├─ Memory & Dreaming    内存 / 梦境系统                  │
+│   ├─ Exec Approvals       执行审批子系统                   │
+│   └─ Control UI           Web 控制界面                     │
 └─────────────────────────────────────────────────────────┘
                            │
 ┌─────────────────────────────────────────────────────────┐
 │   Plugins                                               │
 │   ├─ Channel Plugins    (Discord, Matrix, Telegram...)   │
 │   ├─ Provider Plugins   (OpenAI, Anthropic, Google...)   │
-│   └─ Capability Plugins (TTS, Image Gen, Search...)      │
+│   ├─ Capability Plugins (TTS, Image Gen, Search...)      │
+│   └─ Compaction         可插拔上下文压缩提供商              │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -90,6 +93,8 @@ openclaw/
 - `registerSpeechProvider()` — 语音合成
 - `registerImageGenerationProvider()` — 图像生成
 
+**Provider Auth Aliases**: 插件可声明认证别名，支持多密钥轮换和第三方可信隔离，防止未信任工作区插件劫持 bundled provider 认证。
+
 ### 2. 插件边界
 
 - 插件代码**只能**从 `openclaw/plugin-sdk/*` 导入
@@ -109,11 +114,37 @@ interface ChannelPlugin {
 }
 ```
 
-### 4. 网关协议
+### 4. 内存与梦境系统 (Memory & Dreaming)
+
+OpenClaw 内置主动记忆管理系统，支持短期、长期和梦境叙事：
+
+- **Active Memory Recall** — 主动记忆召回插件 (`extensions/memory-core/`)
+- **Grounded REM Backfill** — 基于真实体验的 REM 回填通道
+- **Dreaming Cron** — 跨运行时生命周期的梦境 cron 协调
+- **Grounded Scene Lane** — 在 Control UI 中展示梦境场景
+- **Short-term Promotion** — Grounded backfill 提升到短期记忆
+
+### 5. 网关协议
 
 - **WebSocket** 双向实时通信
 - **TypeBox Schema** 类型安全的消息协议
 - **设备配对** 基于身份的认证模型
+
+### 6. 执行审批 (Exec Approvals)
+
+网关内置执行审批子系统，对代理工具调用和远程节点执行进行安全管控：
+
+- **Allow-from 模式** — 白名单控制执行权限
+- **Startup Replay** — 启动时重放挂起的审批请求
+- **Native Approval Lifecycle** — 统一的审批生命周期管理
+- **SSRF Guard** — 代理主机名 SSRF 防护，阻止未授权的内网访问
+
+### 7. 可插拔压缩 (Compaction)
+
+支持注册自定义上下文压缩提供商 (`registerCompactionProvider`)，在代理会话中管理上下文窗口：
+
+- 防止工具使用中止后的无限循环调用
+- 保持 compaction 后的 prompt 缓存稳定性
 
 ---
 
@@ -128,6 +159,9 @@ interface ChannelPlugin {
 | **CLI** | `src/cli/` | 命令行界面与命令实现 |
 | **Agents** | `src/agents/` | AI 代理运行与工具调度 |
 | **Media** | `src/media/` | 图像/视频生成、TTS、媒体理解 |
+| **Memory** | `extensions/memory-core/` | 主动记忆召回、梦境系统 |
+| **Exec Approvals** | `src/plugins/` | 执行审批与安全管控 |
+| **Proxy Capture** | `src/proxy-capture/` | 代理捕获、SQLite 存储、覆盖率追踪 |
 
 ---
 
@@ -187,6 +221,20 @@ pnpm android:run
 3. **类型优先** — TypeScript + TypeBox 端到端类型安全
 4. **懒加载** — 热路径优化，运行时延迟加载
 5. **注册表模式** — 动态发现与加载
+6. **Prompt Cache 稳定性** — 请求组装必须确定性排序，避免缓存失效
+7. **无运行时导入循环** — 通过类型拆分 (`*Types.ts`) 消除循环依赖
+8. **执行审批** — 代理工具调用需经 allow-from 白名单审批
+
+---
+
+## 版本线
+
+| 版本 | 说明 |
+|------|------|
+| `2026.4.7` | 稳定发布 — SSRF 加固、Slack 流式去重 |
+| `2026.4.8` | 内存/梦境系统、exec 审批生命周期、iOS CalVer |
+| `2026.4.9` | Provider auth aliases、MLX Talk provider、compaction 注册 |
+| `2026.4.10` | WhatsApp 多账号隔离、OAuth 加固、CI 安全硬化 |
 
 ---
 

@@ -106,10 +106,46 @@ const ws = new WebSocket('wss://gateway.example.com:18789');
 | 场景 | 协议 | 说明 |
 |------|------|------|
 | 本地回环 | `ws://` | 127.0.0.1 / localhost |
-| 私有 LAN | `ws://` | 192.168.x.x / 10.x.x.x |
+| 私有 LAN | `ws://` | 192.168.x.x / 10.x.x.x (RFC 1918, link-local, mDNS `.local`) |
+| Tailscale | `wss://` | 强制加密 |
 | 公网/外网 | `wss://` | 强制加密 |
 
 > **移动端外网必须 `wss://`**
+>
+> 私有 LAN 的 `ws://` 明文连接仅用于缺乏 PKI 身份的局域网，不视为安全风险。
+
+---
+
+## 安全机制
+
+### SSRF 防护
+
+Gateway 对所有出站 HTTP 请求实施 SSRF 防护：
+
+- **RFC2544 私网策略** — `web_fetch` 工具支持 `rfc2544` opt-in，控制私网地址访问
+- **浏览器 SSRF 加固** — 非导航文档跳转的 SSRF 重定向守卫
+- **浏览器 proxy 配置** — 硬化 proxy profile 变更守卫
+- **DNS Pinning** — 信任环境代理调度前跳过 DNS pinning
+
+### 执行审批
+
+代理工具调用 (如 `bash`、`node`) 受执行审批子系统管控：
+
+- **Allow-from 白名单** — 限制可执行的来源路径
+- **TOCTOU 防护** — 脚本预检使用原子 pinned-fd open 替代 check-then-read
+- **远程节点执行** — 与未信任处理对齐的系统消息
+- **Startup Replay** — 网关重启后自动重放挂起的审批请求
+
+### 环境变量安全
+
+- **Host-exec 环境过滤** — 扩展黑名单覆盖 Java、Rust、Cargo 工具链
+- **Dotenv 隔离** — 阻断工作区运行时环境变量注入
+- **凭证脱敏** — `browser.cdpUrl` 配置路径中的凭证自动脱敏
+
+### 会话安全
+
+- **密钥轮换失效** — 共享令牌/密码 WebSocket 会话在密钥轮换后自动失效
+- **工具使用中止保护** — 防止 compaction 后的无限循环调用
 
 ---
 
@@ -121,6 +157,39 @@ openclaw devices approve <id>  # 审批设备
 ```
 
 本地回环自动审批，远程需显式审批。
+
+### Android QR 配对
+
+Android 端支持 QR 码扫描配对流程：
+
+- 优先使用存储的设备认证
+- Bootstrap 认证作为 QR 配对回退
+- 新 setup code 自动重置认证
+- 配对审批后自动恢复
+
+### 节点重连
+
+- 命令升级（command upgrades）需重新配对
+- 网关在节点断开后保留会话状态
+
+---
+
+## 多账号与线程路由
+
+### WhatsApp 多账号
+
+- 入站状态按账号隔离
+- 重连后自动投递排队消息
+- 回复跨重连保留
+
+### 线程路由
+
+Gateway 在投递上下文中保留 `threadId`，确保跨通道线程回复准确：
+
+- Slack — `thread_ts` 保留
+- Telegram — `replyToMessageId` 保留
+- Mattermost — root post ID 保留
+- MS Teams — `replyToId` 隔离频道线程会话
 
 ---
 
