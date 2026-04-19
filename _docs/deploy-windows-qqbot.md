@@ -19,7 +19,7 @@ pnpm install
 pnpm ui:build
 pnpm build
 pnpm link --global              # 可选，链接后全局可用 openclaw
-openclaw onboard --non-interactive --skip-health
+openclaw onboard --non-interactive --accept-risk --skip-health
 ```
 
 ## 3. 配置
@@ -40,7 +40,15 @@ QQBOT_CLIENT_SECRET=your-qq-client-secret
     "providers": {
       "zai": {
         "api": "openai-completions",
-        "baseUrl": "https://open.bigmodel.cn/api/paas/v4"
+        "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
+        "models": [
+          {
+            "id": "glm-5.1",
+            "name": "GLM 5.1",
+            "contextWindow": 200000,
+            "maxTokens": 131072
+          }
+        ]
       }
     }
   },
@@ -48,30 +56,10 @@ QQBOT_CLIENT_SECRET=your-qq-client-secret
   "agents": {
     "defaults": {
       "model": { "primary": "zai/glm-5.1" },
-
-      "contextInjection": "continuation-skip",
-
-      "compaction": {
-        "model": "zai/glm-4.5-flash",
-        "maxHistoryShare": 0.4,
-        "truncateAfterCompaction": true
-      },
-
       "contextPruning": { "mode": "cache-ttl", "ttl": "1h" },
-      "thinkingDefault": "off",
-      "bootstrapMaxChars": 8000,
-      "bootstrapTotalMaxChars": 40000,
-      "contextLimits": {
-        "memoryGetMaxChars": 8000,
-        "toolResultMaxChars": 10000,
-        "postCompactionMaxChars": 1200
-      },
-
       "heartbeat": {
-        "model": "zai/glm-4.5-flash",
         "isolatedSession": true,
-        "lightContext": true,
-        "every": "55m"
+        "lightContext": true
       }
     }
   },
@@ -93,15 +81,13 @@ QQBOT_CLIENT_SECRET=your-qq-client-secret
   },
 
   "tools": {
-    "fs": { "workspaceOnly": true },
+    "profile": "coding",
     "exec": {
       "security": "allowlist",
       "ask": "on-miss",
-      "askFallback": "deny",
       "strictInlineEval": true
     },
-    "elevated": { "enabled": false },
-    "applyPatch": { "workspaceOnly": true }
+    "elevated": { "enabled": false }
   }
 }
 ```
@@ -113,8 +99,48 @@ QQBOT_CLIENT_SECRET=your-qq-client-secret
 1. https://q.qq.com 扫码登录 → 创建机器人 → 记下 **AppID** 和 **AppSecret**
 2. AppSecret 离开页面后无法再查看，只能重新生成
 
+### 方式 A：自动安装（npm 正常时）
+
 ```powershell
-openclaw plugins install @tencent-connect/openclaw-qqbot@latest
+openclaw plugins install @tencent-connect/openclaw-qqbot@latest --dangerously-force-unsafe-install
+```
+
+> `--dangerously-force-unsafe-install` 跳过 `child_process` 安全扫描（QQ Bot 插件音频转换/平台检测需要）。
+
+### 方式 B：手动安装（npm 报 Link.matches 崩溃时）
+
+npm 在解析该插件的复杂依赖树时可能触发 `Cannot read properties of null (reading 'matches')` 错误（npm arborist bug）。此时用 pnpm 手动安装：
+
+```powershell
+# 1. 下载插件包
+mkdir C:\temp\qqbot-install
+cd C:\temp\qqbot-install
+npm pack @tencent-connect/openclaw-qqbot@latest
+
+# 2. 解压（依赖已 bundled，无需额外 npm/pnpm install）
+mkdir qqbot-files
+cd qqbot-files
+tar -xzf ..\tencent-connect-openclaw-qqbot-*.tgz --strip-components=1
+
+# 3. 复制到插件目录
+robocopy . "$env:USERPROFILE\.openclaw\extensions\openclaw-qqbot" /E
+
+# 4. 清理临时文件
+cd ..
+Remove-Item qqbot-install -Recurse -Force
+```
+
+### 验证插件加载
+
+```powershell
+openclaw plugins list    # 应显示 openclaw-qqbot v1.7.x loaded
+```
+
+> 首次加载会提示 `plugins.allow is empty`，建议在 `openclaw.json` 中添加 `"plugins": { "allow": ["openclaw-qqbot"] }` 显式信任。
+
+### 渠道注册
+
+```powershell
 openclaw channels add --channel qqbot --use-env
 openclaw gateway restart
 openclaw channels status --probe
